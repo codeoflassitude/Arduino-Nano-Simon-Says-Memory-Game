@@ -1,0 +1,163 @@
+int ev = 0, cntr = 0;
+byte step = 0, pntr = 0;
+byte cx = 0, sx;
+byte dg[] = { 10, 10, 10 };
+byte keyPX, keyPXD, keyCODE;
+//----------- pgfedcba pgfedcba pgfedcba pgfedcba
+const byte dx[] = { B0111111, B0000110, B1011011, B1001111, // 0,1,2,3,
+B1100110, B1101101, B1111101, B0000111, // 4,5,6,7,
+B1111111, B1101111, B1000000, B1011100, // 8,9,-,o
+B1001001, B0000000, B0000000, B0000000 }; // #,_,_,_
+byte quiz[] = { 3, 1, 4, 1, 5, 0xFF };
+
+byte KeyPress() {
+  byte key = 255; // No key pressed
+  //scan columns (PD6, PD7, PD1)
+  PORTD = (PORTD & 0x3D) | (0 << 6); //PD6 low, others high
+  if (!(PIND & (1 << 2))) key = 1; //row 1: 1
+  if (!(PIND & (1 << 3))) key = 4; //row 2: 4
+  if (!(PIND & (1 << 4))) key = 7; //row 3: 7
+  if (!(PIND & (1 << 5))) key = 10; //row 4: *
+  PORTD = (PORTD & 0x3D) | (1 << 6); //PD6 high
+  PORTD = (PORTD & 0x7F) | (0 << 7); //PD7 low
+  if (!(PIND & (1 << 2))) key = 2; //row 1: 2
+  if (!(PIND & (1 << 3))) key = 5; //row 2: 5
+  if (!(PIND & (1 << 4))) key = 8; //row 3: 8
+  if (!(PIND & (1 << 5))) key = 0; //row 4: 0
+  PORTD = (PORTD & 0x7F) | (1 << 7); //PD7 high
+  PORTD = (PORTD & 0xFE) | (0 << 1); //PD1 low
+  if (!(PIND & (1 << 2))) key = 3; //row 1: 3
+  if (!(PIND & (1 << 3))) key = 6; //row 2: 6
+  if (!(PIND & (1 << 4))) key = 9; //row 3: 9
+  if (!(PIND & (1 << 5))) key = 11; //row 4: #
+  PORTD = (PORTD & 0xFE) | (1 << 1); //PD1 high
+  return key;
+}
+
+ISR(TIMER2_COMPA_vect) {
+  ev++;
+  if (ev == 1) {
+    ev = 0;
+    sx = dx[dg[cx]];
+    PORTB = PORTB | B011100; //set unused bits
+    PORTC = sx & 0x3F; //segments a-f
+    PORTB = ((PORTB & 0xFC) | (sx >> 6)); //segment g
+    PORTB = PORTB & (~(4 << cx)); //select digit
+    cx = ++cx % 3; //next digit
+  }
+}
+
+void longBZ() {
+  PORTB |= (1 << 5); //buzzer on (D13, PB5)
+  delay(500); // 500 ms
+  PORTB &= ~(1 << 5); //buzzer off
+}
+
+void shortBZ() {
+  PORTB |= (1 << 5); //buzzer on (D13, PB5)
+  delay(100); // 100 ms
+  PORTB &= ~(1 << 5); //buzzer off
+}
+
+void clrDSP() {
+  dg[0] = 14; //blank
+  dg[1] = 14;
+  dg[2] = 14;
+}
+
+void stxDSP() {
+  dg[0] = 10; //dash
+  dg[1] = 10;
+  dg[2] = 10;
+  delay(500);
+  clrDSP();
+  delay(500);
+  dg[0] = 10;
+  dg[1] = 10;
+  dg[2] = 10;
+  delay(500);
+  clrDSP();
+  shortBZ(); //buzz on start
+}
+
+void overDSP() {
+  dg[0] = 11; //'o'
+  dg[1] = 11;
+  dg[2] = 11;
+  shortBZ();
+  delay(200);
+  shortBZ();
+  delay(200);
+  shortBZ();
+}
+
+void wonDSP() {
+  dg[0] = 12; //'三'
+  dg[1] = 12;
+  dg[2] = 12;
+  longBZ();
+  delay(200);
+  longBZ();
+}
+
+void setup() {
+  Serial.begin(9600);
+  DDRC = 0x3F; //PC[0..5] as output
+  DDRB = 0x3F; //PB[0..5] as output
+  DDRD = 0xC2; //PD[6,7,1] outputs, PD0 for buzzer
+  PORTD = 0x3E; //PD[2..5] pull-ups
+  TCCR2A = 0x02; //timer2 CTC
+  TCCR2B = 0x04; //prescaler 64
+  OCR2A = 128;
+  TIMSK2 = 0x02; //enable OCR2A interrupt
+  sei();
+}
+
+void loop() {
+  stxDSP(); //show "---" flashing, buzz
+  while (KeyPress() == 255); //wait for any key
+  clrDSP();
+  step = 1; //start at step 1
+  while (1) {
+    pntr = 0;
+    //show sequence
+    dg[0] = 14; dg[1] = 14; dg[2] = 14; //initialise blank
+    while (pntr < step && quiz[pntr] != 0xFF) {
+      //shift digits left
+      dg[2] = pntr >= 2 ? quiz[pntr-2] : 14; //hundreds
+      dg[1] = pntr >= 1 ? quiz[pntr-1] : 14; //tens
+      dg[0] = quiz[pntr]; //units
+      shortBZ();
+      delay(500);
+      clrDSP();
+      delay(200);
+      pntr++;
+    }
+    // Get input
+    pntr = 0;
+    cntr = 0;
+    dg[0] = 14; dg[1] = 14; dg[2] = 14; //initialise blank
+    while (pntr < step && quiz[pntr] != 0xFF) {
+      keyCODE = 255;
+      while (keyCODE == 255) keyCODE = KeyPress();
+      if (keyCODE != quiz[pntr]) {
+        overDSP();
+        return; //restart game
+      }
+      //show input with scrolling
+      dg[2] = pntr >= 2 ? quiz[pntr-2] : 14;
+      dg[1] = pntr >= 1 ? quiz[pntr-1] : 14;
+      dg[0] = keyCODE;
+      shortBZ();
+      delay(500);
+      clrDSP();
+      pntr++;
+      cntr++;
+    }
+    step++;
+    if (quiz[step - 1] == 0xFF) {
+      wonDSP();
+      return; //restart game
+    }
+  }
+}
